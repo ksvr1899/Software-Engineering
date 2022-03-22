@@ -17,13 +17,13 @@ def replaceword(x,searchword,replaceword):
       filedata = file.read()
     
     split_list = re.split(" ",filedata) #splitting the text utilizing spaces into a rundown
-    print(split_list)
+    
     i=0
     for i in range(len(split_list)):
         if searchword == split_list[i]:
             split_list[i]=replaceword
-            print(split_list[i])
-    print(split_list)
+            
+    
             
     filedata=" ".join(split_list)
         
