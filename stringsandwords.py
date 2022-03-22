@@ -1,9 +1,8 @@
 # Download punkt resource
 #nltk.download('punkt')
 
+import operations
 
-import tokens
-import count
 
 # Input document
 data=input("Enter the file name to be processed: ")
@@ -14,10 +13,10 @@ with open(data) as f:
 words=[]
 for x in lines:
     # Tokenize the text string and storing in the list
-    words= words + tokens.tokenize(x)
+    words= words + operations.tokenize(x)
 
 # Frequency distribution of the words using nltk
-fdist= count.frequency(words)
+fdist= operations.count(words)
 
 # Creating a dictionary of the words and their frequency used
 filtered_word_freq = dict((word, freq) for word, freq in fdist.items() if not word.isdigit())
@@ -26,3 +25,12 @@ filtered_word_freq = dict((word, freq) for word, freq in fdist.items() if not wo
 print("\nUnique Words in the file with their frequency:\n")
 for key, value in filtered_word_freq.items():
     print(key, ' : ', value)
+    
+#Second Requirement
+
+word=input("\nEnter the word to search for:")
+replace_word=input("\nEnter the word to Replace it with:")
+
+operations.replaceword(data,word,replace_word)
+
+
