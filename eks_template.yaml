@@ -1,0 +1,163 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to deploy an EKS cluster with control plane and node group in private subnets of an existing VPC.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: ID of the existing VPC
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of private subnet IDs in the existing VPC (minimum 2 for HA)
+  ClusterName:
+    Type: String
+    Default: MyEKSCluster 
+    Description: Name of the EKS cluster
+  NodeInstanceType:
+    Type: String
+    Default: t2.micro
+    Description: EC2 instance type for worker nodes
+  DesiredCapacity:
+    Type: Number
+    Default: 2
+    Description: Desired number of worker nodes
+  MinSize:
+    Type: Number
+    Default: 1
+    Description: Minimum number of worker nodes
+  MaxSize:
+    Type: Number
+    Default: 3
+    Description: Maximum number of worker nodes
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 key pair for SSH access to worker nodes
+    Default: eks-cluster-key
+
+Resources:
+  # --- IAM Roles ---
+  # EKS Cluster Role
+  EKSClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+
+  # Worker Node IAM Role
+  NodeGroupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+
+  # --- Security Groups ---
+  # Control Plane Security Group
+  ControlPlaneSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EKS control plane
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0  # Allow all outbound traffic
+
+  # Worker Node Security Group
+  NodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EKS worker nodes
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0  # Restrict this in production
+        - IpProtocol: tcp
+          FromPort: 1025
+          ToPort: 65535
+          SourceSecurityGroupId: !Ref ControlPlaneSecurityGroup  # Allow control plane to worker
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref ControlPlaneSecurityGroup  # Allow control plane to worker
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0  # Allow all outbound traffic
+
+  # Update ControlPlaneSecurityGroup to allow worker nodes after NodeSecurityGroup is created
+  ControlPlaneSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref NodeSecurityGroup  # Allow worker nodes to communicate
+
+  # --- EKS Cluster (Control Plane) ---
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Ref ClusterName
+      RoleArn: !GetAtt EKSClusterRole.Arn
+      Version: '1.30'  # Update to the desired Kubernetes version
+      ResourcesVpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds:
+          - !Ref ControlPlaneSecurityGroup
+        EndpointPublicAccess: false  # Private-only access
+        EndpointPrivateAccess: true
+
+  # --- EKS Node Group (Worker Nodes) ---
+  EKSNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref EKSCluster
+      NodeRole: !GetAtt NodeGroupRole.Arn
+      Subnets: !Ref PrivateSubnetIds
+      InstanceTypes:
+        - !Ref NodeInstanceType
+      ScalingConfig:
+        MinSize: !Ref MinSize
+        MaxSize: !Ref MaxSize
+        DesiredSize: !Ref DesiredCapacity
+      RemoteAccess:
+        Ec2SshKey: !Ref KeyName
+        SourceSecurityGroups:
+          - !Ref NodeSecurityGroup
+      Tags:
+        kubernetes.io/cluster/MyEKSCluster : !Sub "owned"
+           
+
+Outputs:
+  ClusterName:
+    Description: The name of the EKS cluster
+    Value: !Ref EKSCluster
+  ClusterEndpoint:
+    Description: The endpoint for the EKS cluster
+    Value: !GetAtt EKSCluster.Endpoint
+  ClusterSecurityGroup:
+    Description: Security group for the EKS control plane
+    Value: !Ref ControlPlaneSecurityGroup
+  NodeGroupArn:
+    Description: The ARN of the node group
+    Value: !GetAtt EKSNodeGroup.Arn
+  NodeSecurityGroup:
+    Description: Security group for the worker nodes
+    Value: !Ref NodeSecurityGroup
